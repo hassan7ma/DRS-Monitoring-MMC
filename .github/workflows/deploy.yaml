@@ -1,0 +1,93 @@
+name: DRS Monitor CI/CD
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+
+jobs:
+  security:
+    name: Security Scans
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # -------- Checkov (CloudFormation) --------
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          file: drs-lag-monitor.yaml
+          quiet: true
+          soft_fail: false
+          framework: cloudformation
+
+      # -------- Bandit (Lambda) --------
+      - name: Install Bandit
+        run: pip install bandit
+
+      - name: Run Bandit
+        run: |
+          bandit -r lambda_function.py -ll -ii
+
+  deploy:
+    name: Deploy Stack
+    needs: security
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # -------- AWS Auth (OIDC) --------
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::991587605613:role/GitHub-Deploy-Role
+          aws-region: eu-west-1
+
+      # -------- Package Lambda --------
+      - name: Zip Lambda
+        run: |
+          zip lambda.zip lambda.py
+
+      # -------- Create S3 Bucket (If Not Exists) --------
+      - name: Create S3 Bucket
+        run: |
+          BUCKET="drs-lambda-${{ github.repository_owner }}-9915"
+
+          aws s3api head-bucket --bucket $BUCKET 2>/dev/null || \
+          aws s3api create-bucket \
+            --bucket $BUCKET \
+            --region eu-west-1 \
+            --create-bucket-configuration LocationConstraint=eu-west-1
+
+          echo "BUCKET=$BUCKET" >> $GITHUB_ENV
+
+      # -------- Upload Code --------
+      - name: Upload Lambda
+        run: |
+          KEY="lambda-${{ github.sha }}.zip"
+
+          aws s3 cp lambda.zip s3://$BUCKET/$KEY
+
+          echo "KEY=$KEY" >> $GITHUB_ENV
+
+      # -------- Deploy CloudFormation --------
+      - name: Deploy Stack
+        run: |
+          aws cloudformation deploy \
+            --template-file drs-lag-monitor.yaml \
+            --stack-name drs-lag-monitor \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --parameter-overrides \
+              AlertEmail=hassan.maher@bexprt.com \
+              LagThreshold=120 \
+              LambdaCodeBucket=$BUCKET \
+              LambdaCodeKey=$KEY
+
