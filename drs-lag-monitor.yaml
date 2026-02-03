@@ -156,11 +156,11 @@ Resources:
         S3Bucket: !Ref LambdaCodeBucket
         S3Key: !Ref LambdaCodeKey
         
-        Environment:
-          Variables:
-            LAG_THRESHOLD_SECONDS: !Ref LagThreshold
-            SNS_TOPIC_ARN: !Ref AlertTopic
-            DRS_REGIONS: !Ref DRSRegions
+      Environment:
+        Variables:
+          LAG_THRESHOLD_SECONDS: !Ref LagThreshold
+          SNS_TOPIC_ARN: !Ref AlertTopic
+          DRS_REGIONS: !Ref DRSRegions
 
 # ------------------------------------------------------------
 # EventBridge Schedule
