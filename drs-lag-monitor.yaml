@@ -29,15 +29,6 @@ Parameters:
 Resources:
  
 # ------------------------------------------------------------
-# KMS Key (Lambda Env Encryption)
-# ------------------------------------------------------------
-  LambdaKmsKey:
-    Type: AWS::KMS::Key
-    Properties:
-      Description: !Sub "DR-Monitoring-kms-key-${AWS::AccountId}"
-      EnableKeyRotation: true
- 
-# ------------------------------------------------------------
 # Dead Letter Queue
 # ------------------------------------------------------------
   LambdaDLQ:
@@ -45,8 +36,6 @@ Resources:
     Properties:
       QueueName: !Sub "DR-Monitoring-dlq-${AWS::AccountId}"
       MessageRetentionPeriod: 1209600
-      KmsMasterKeyId: !GetAtt LambdaKmsKey.Arn
-      KmsDataKeyReusePeriodSeconds: 300
  
 # ------------------------------------------------------------
 # SNS Topic
@@ -55,7 +44,6 @@ Resources:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: !Sub "DR-Monitoring-sns-topic-${AWS::AccountId}"
-      KmsMasterKeyId: !GetAtt LambdaKmsKey.Arn
  
 # ------------------------------------------------------------
 # SNS Email Subscription
@@ -116,14 +104,6 @@ Resources:
                   - sqs:SendMessage
                 Resource: !GetAtt LambdaDLQ.Arn
  
-              # KMS Access
-              - Effect: Allow
-                Action:
-                  - kms:Encrypt
-                  - kms:Decrypt
-                  - kms:GenerateDataKey
-                Resource: !GetAtt LambdaKmsKey.Arn
- 
 # ------------------------------------------------------------
 # Lambda Function
 # ------------------------------------------------------------
@@ -147,8 +127,6 @@ Resources:
       ReservedConcurrentExecutions: 2
  
       Role: !GetAtt LambdaExecutionRole.Arn
- 
-      KmsKeyArn: !GetAtt LambdaKmsKey.Arn
  
       DeadLetterConfig:
         TargetArn: !GetAtt LambdaDLQ.Arn
@@ -197,9 +175,6 @@ Outputs:
  
   DLQName:
     Value: !Ref LambdaDLQ
- 
-  KmsKeyId:
-    Value: !Ref LambdaKmsKey
  
   SNSTopic:
     Value: !Ref AlertTopic
