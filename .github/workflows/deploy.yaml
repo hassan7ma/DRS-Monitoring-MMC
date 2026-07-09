@@ -5,6 +5,10 @@ on:
     branches: [ "main" ]
   pull_request:
 
+env:
+  AWS_REGION: eu-west-1
+  ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+
 jobs:
   security:
     name: Security Scans
@@ -14,11 +18,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # -------- Checkov (CloudFormation) --------
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install CDK CLI
+        run: npm install -g aws-cdk
+
+      - name: Install CDK app dependencies
+        run: pip install -r cdk/requirements.txt
+
+      # -------- CDK Synth (placeholder context, no AWS creds needed) --------
+      - name: CDK Synth
+        working-directory: cdk
+        run: |
+          cdk synth \
+            -c alert_email=placeholder@example.com \
+            -c lag_threshold=120 \
+            -c drs_regions="" \
+            -c account=000000000000 \
+            -c region=${{ env.AWS_REGION }}
+
+      # -------- Checkov on synthesized CloudFormation template --------
       - name: Run Checkov
         uses: bridgecrewio/checkov-action@master
         with:
-          file: drs-lag-monitor.yaml
+          directory: cdk/cdk.out
           quiet: true
           soft_fail: false
           framework: cloudformation
@@ -29,11 +55,12 @@ jobs:
 
       - name: Run Bandit
         run: |
-          bandit -r lambda.py -ll -ii
+          bandit -r cdk/lambda -ll -ii
 
   deploy:
     name: Deploy Stack
     needs: security
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
 
     permissions:
@@ -44,50 +71,38 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install CDK CLI
+        run: npm install -g aws-cdk
+
+      - name: Install CDK app dependencies
+        run: pip install -r cdk/requirements.txt
+
       # -------- AWS Auth (OIDC) --------
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::991587605613:role/GitHub-Deploy-Role
-          aws-region: eu-west-1
+          aws-region: ${{ env.AWS_REGION }}
 
-      # -------- Package Lambda --------
-      - name: Zip Lambda
+      # -------- Preview changes --------
+      - name: CDK Diff
+        working-directory: cdk
         run: |
-          zip lambda.zip lambda.py
+          cdk diff \
+            -c alert_email="${{ env.ALERT_EMAIL }}" \
+            -c lag_threshold=120 \
+            -c drs_regions="" || true
 
-      # -------- Create S3 Bucket (If Not Exists) --------
-      - name: Create S3 Bucket
+      # -------- Deploy (CDK owns asset packaging - no manual S3 bucket) --------
+      - name: CDK Deploy
+        working-directory: cdk
         run: |
-          BUCKET="drs-lambda-${{ github.repository_owner }}-9915"
-
-          aws s3api head-bucket --bucket $BUCKET 2>/dev/null || \
-          aws s3api create-bucket \
-            --bucket $BUCKET \
-            --region eu-west-1 \
-            --create-bucket-configuration LocationConstraint=eu-west-1
-
-          echo "BUCKET=$BUCKET" >> $GITHUB_ENV
-
-      # -------- Upload Code --------
-      - name: Upload Lambda
-        run: |
-          KEY="lambda-${{ github.sha }}.zip"
-
-          aws s3 cp lambda.zip s3://$BUCKET/$KEY
-
-          echo "KEY=$KEY" >> $GITHUB_ENV
-
-      # -------- Deploy CloudFormation --------
-      - name: Deploy Stack
-        run: |
-          aws cloudformation deploy \
-            --template-file drs-lag-monitor.yaml \
-            --stack-name drs-lag-monitor \
-            --capabilities CAPABILITY_NAMED_IAM \
-            --parameter-overrides \
-              AlertEmail=hassan.maher@bexprt.com \
-              LagThreshold=120 \
-              LambdaCodeBucket=$BUCKET \
-              LambdaCodeKey=$KEY
-
+          cdk deploy --require-approval never \
+            -c alert_email="${{ env.ALERT_EMAIL }}" \
+            -c lag_threshold=120 \
+            -c drs_regions=""
