@@ -1,0 +1,7 @@
+{
+  "app": "python app.py",
+  "context": {
+    "lag_threshold": 120,
+    "drs_regions": ""
+  }
+}
